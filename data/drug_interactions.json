@@ -1,0 +1,74 @@
+{
+  "interactions": [
+    {
+      "pair": ["SSRI", "Dextromethorphan"],
+      "severity": "CRITICAL",
+      "condition": "Serotonin Syndrome",
+      "mechanism": "Both agents increase serotonin levels, leading to toxicity.",
+      "symptoms": ["Agitation", "Hyperthermia", "Muscle Rigidity", "Seizures"]
+    },
+    {
+      "pair": ["Warfarin", "Aspirin"],
+      "severity": "HIGH",
+      "condition": "Bleeding Risk",
+      "mechanism": "Potentiation of anticoagulant effect.",
+      "symptoms": ["Uncontrollable bleeding", "Bruising", "Black stools"]
+    },
+    {
+      "pair": ["Nitrates", "Sildenafil"],
+      "severity": "CRITICAL",
+      "condition": "Severe Hypotension",
+      "mechanism": "Synergistic vasodilation causes unsafe drop in blood pressure.",
+      "symptoms": ["Dizziness", "Fainting", "Stroke", "Heart Attack"]
+    },
+    {
+      "pair": ["ACE Inhibitors", "Potassium Supplements"],
+      "severity": "HIGH",
+      "condition": "Hyperkalemia",
+      "mechanism": "Reduced potassium excretion.",
+      "symptoms": ["Heart palpitations", "Arrhythmia", "Muscle weakness"]
+    },
+    {
+      "pair": ["Simvastatin", "Clarithromycin"],
+      "severity": "HIGH",
+      "condition": "Rhabdomyolysis",
+      "mechanism": "Inhibition of CYP3A4 increases statin levels.",
+      "symptoms": ["Muscle pain", "Dark urine", "Kidney failure"]
+    },
+    {
+      "pair": ["Opioids", "Benzodiazepines"],
+      "severity": "CRITICAL",
+      "condition": "Respiratory Depression",
+      "mechanism": "Synergistic CNS depression.",
+      "symptoms": ["Slow breathing", "Unconsciousness", "Death"]
+    },
+    {
+      "pair": ["Digoxin", "Amiodarone"],
+      "severity": "HIGH",
+      "condition": "Digoxin Toxicity",
+      "mechanism": "Amiodarone increases digoxin levels.",
+      "symptoms": ["Nausea", "Visual halos", "Arrhythmia"]
+    },
+    {
+      "pair": ["Methotrexate", "NSAIDs"],
+      "severity": "HIGH",
+      "condition": "Methotrexate Toxicity",
+      "mechanism": "Reduced renal clearance of methotrexate.",
+      "symptoms": ["Bone marrow suppression", "Liver damage"]
+    },
+    {
+      "pair": ["MAOIs", "Tyramine-rich foods"],
+      "severity": "CRITICAL",
+      "condition": "Hypertensive Crisis",
+      "mechanism": "Inhibition of tyramine breakdown.",
+      "symptoms": ["Severe headache", "Neck stiffness", "High blood pressure"]
+    },
+    {
+      "pair": ["Oral Contraceptives", "Antibiotics (Rifampin)"],
+      "severity": "MEDIUM",
+      "condition": "Reduced Contraceptive Efficacy",
+      "mechanism": "Enzyme induction increases metabolism of hormones.",
+      "symptoms": ["Unintended pregnancy"]
+    }
+  ]
+}

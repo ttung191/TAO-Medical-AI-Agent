@@ -1,0 +1,64 @@
+{
+  "protocols": [
+    {
+      "condition": "Sepsis",
+      "criteria": "Suspected infection + qSOFA score >= 2 (Low BP < 100, High Resp Rate > 22, Altered Mentation)",
+      "immediate_action": [
+        "Measure Lactate Level",
+        "Obtain Blood Cultures before antibiotics",
+        "Administer Broad-spectrum Antibiotics (within 1 hour)",
+        "Administer 30ml/kg Crystalloid for Hypotension or Lactate >= 4mmol/L",
+        "Apply Vasopressors if hypotensive during or after fluid resuscitation"
+      ],
+      "golden_hour": true
+    },
+    {
+      "condition": "Anaphylaxis",
+      "criteria": "Acute onset involving skin/mucosa + Resp compromise OR Low BP OR GI symptoms",
+      "immediate_action": [
+        "IM Epinephrine (1:1000) immediately into mid-outer thigh",
+        "High-flow Oxygen",
+        "IV Fluids (Large bore access)",
+        "Position patient supine (legs up) unless vomiting",
+        "Albuterol for bronchospasm",
+        "Antihistamines/Corticosteroids (Secondary)"
+      ],
+      "red_flags": ["Stridor", "Wheezing", "Shock"]
+    },
+    {
+      "condition": "Acute Coronary Syndrome (ACS)",
+      "criteria": "Chest pain/pressure, radiation to arm/jaw, diaphoresis, nausea (or atypical in women/diabetics)",
+      "immediate_action": [
+        "Aspirin 325mg (chewed, non-enteric coated)",
+        "Nitroglycerin SL (if SBP > 90 and no ED meds)",
+        "Oxygen (if Sat < 90%)",
+        "Morphine (if pain refractory to nitrates)",
+        "STAT 12-lead ECG (within 10 mins)",
+        "Activate Cath Lab if STEMI"
+      ]
+    },
+    {
+      "condition": "Stroke (CVA)",
+      "criteria": "FAST: Face drooping, Arm weakness, Speech difficulty, Time to call 911",
+      "immediate_action": [
+        "Check Blood Glucose (rule out hypoglycemia)",
+        "Determine 'Last Known Normal' time",
+        "Non-contrast CT Head (STAT)",
+        "Keep NPO (Nothing by mouth)",
+        "Elevate head of bed 30 degrees",
+        "Maintain O2 > 94%"
+      ]
+    },
+    {
+      "condition": "Diabetic Ketoacidosis (DKA)",
+      "criteria": "Hyperglycemia (>250), Acidosis (pH < 7.3), Ketones in urine/blood",
+      "immediate_action": [
+        "IV Fluids (0.9% NS) aggressive hydration",
+        "Potassium replacement (ensure K > 3.3 before insulin)",
+        "IV Insulin infusion (0.1 units/kg/hr)",
+        "Monitor Electrolytes hourly",
+        "Identify precipitating cause (infection, missed dose)"
+      ]
+    }
+  ]
+}
