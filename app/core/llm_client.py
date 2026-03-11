@@ -21,8 +21,8 @@ class LLMClient:
     def _get_input(self, prompt, kwargs):
         p = prompt if prompt else (kwargs.get('prompt') or kwargs.get('content') or "Analyze")
         s = kwargs.get('system_instruction') or kwargs.get('system_prompt')
-        # ✅ CẬP NHẬT: Gemini 3 Flash
-        m = kwargs.get('model') or "gemini-2.5-flash"
+        # Sử dụng đúng model Gemini 2.5 Flash như bạn yêu cầu
+        m = kwargs.get('model') or "models/gemini-2.5-flash"
         return str(p), s, m
 
     def generate_content(self, prompt=None, **kwargs):
