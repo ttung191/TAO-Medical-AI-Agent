@@ -16,76 +16,60 @@ class LLMClient:
             self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
             self.provider = "openai"
         else:
-            raise ValueError("⚠️ Không tìm thấy API Key!")
+            raise ValueError("⚠️ Thiếu API Key!")
 
-    def _prepare_params(self, kwargs):
-        """Hàm phụ để xử lý sự lệch pha giữa các Agent."""
-        # Chấp nhận cả 'system_prompt' và 'system_instruction'
+    def _call_ai(self, is_json=False, **kwargs):
+        """Hàm xử lý lõi, linh hoạt với mọi loại tham số truyền vào."""
+        # Nghỉ 1.5s để đảm bảo không bị Google chặn vì gọi quá nhanh
+        time.sleep(1.5)
+        
+        # Nhặt nhạnh tham số từ túi kwargs bất kể tên gọi là gì
+        prompt = kwargs.get('prompt') or kwargs.get('content') or ""
         system_instruction = kwargs.get('system_instruction') or kwargs.get('system_prompt')
         model_name = kwargs.get('model') or "gemini-1.5-flash"
-        return system_instruction, model_name
-
-    def generate_content(self, prompt, **kwargs):
-        """Hàm text: Chấp nhận mọi tham số dư thừa để không bị sập."""
-        time.sleep(1.5) # Nghỉ ngắn để né lỗi 429
-        system_instruction, model_name = self._prepare_params(kwargs)
         
+        if self.provider == "gemini":
+            config = {"response_mime_type": "application/json"} if is_json else {}
+            model_obj = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_instruction,
+                generation_config=config
+            )
+            response = model_obj.generate_content(prompt)
+            return response.text
+            
+        elif self.provider == "openai":
+            messages = []
+            if system_instruction:
+                messages.append({"role": "system", "content": system_instruction})
+            messages.append({"role": "user", "content": prompt})
+            
+            response = self.client.chat.completions.create(
+                model=kwargs.get('model') or "gpt-4o-mini",
+                messages=messages,
+                response_format={"type": "json_object"} if is_json else None
+            )
+            return response.choices[0].message.content
+
+    def generate_content(self, prompt=None, **kwargs):
+        """Hàm text: prompt bây giờ là tùy chọn, không sợ bị thiếu tham số."""
+        if prompt: kwargs['prompt'] = prompt
         try:
-            if self.provider == "gemini":
-                model_obj = genai.GenerativeModel(
-                    model_name=model_name,
-                    system_instruction=system_instruction
-                )
-                response = model_obj.generate_content(prompt)
-                return response.text
-                
-            elif self.provider == "openai":
-                messages = []
-                if system_instruction:
-                    messages.append({"role": "system", "content": system_instruction})
-                messages.append({"role": "user", "content": prompt})
-                
-                response = self.client.chat.completions.create(
-                    model=kwargs.get('model') or "gpt-4o-mini",
-                    messages=messages
-                )
-                return response.choices[0].message.content
+            return self._call_ai(is_json=False, **kwargs)
         except Exception as e:
-            logger.error(f"Lỗi generate_content: {e}")
+            logger.error(f"Lỗi Content: {e}")
             return f"Error: {str(e)}"
 
-    def generate_json(self, prompt, **kwargs):
-        """Hàm JSON: Chấp nhận mọi tham số dư thừa để không bị sập."""
-        time.sleep(1.5) # Nghỉ ngắn để né lỗi 429
-        system_instruction, model_name = self._prepare_params(kwargs)
-        
+    def generate_json(self, prompt=None, **kwargs):
+        """Hàm JSON: prompt bây giờ là tùy chọn, chấp nhận mọi kiểu gọi."""
+        if prompt: kwargs['prompt'] = prompt
         try:
-            if self.provider == "gemini":
-                generation_config = {"response_mime_type": "application/json"}
-                model_obj = genai.GenerativeModel(
-                    model_name=model_name,
-                    system_instruction=system_instruction,
-                    generation_config=generation_config
-                )
-                response = model_obj.generate_content(prompt)
-                return json.loads(response.text)
-                
-            elif self.provider == "openai":
-                messages = []
-                if system_instruction:
-                    messages.append({"role": "system", "content": system_instruction})
-                messages.append({"role": "user", "content": prompt})
-                
-                response = self.client.chat.completions.create(
-                    model=kwargs.get('model') or "gpt-4o-mini",
-                    messages=messages,
-                    response_format={"type": "json_object"}
-                )
-                return json.loads(response.choices[0].message.content)
+            res = self._call_ai(is_json=True, **kwargs)
+            return json.loads(res)
         except Exception as e:
-            logger.error(f"Lỗi generate_json: {e}")
+            logger.error(f"Lỗi JSON: {e}")
             return {
-                "diagnosis": "Lỗi xử lý",
-                "reasoning": str(e),
+                "diagnosis": "Lỗi xử lý hệ thống",
+                "reasoning": f"Sự cố API hoặc JSON format: {str(e)}",
                 "escalation_decision": "REJECT"
             }
