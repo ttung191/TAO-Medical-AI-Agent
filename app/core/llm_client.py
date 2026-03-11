@@ -9,9 +9,8 @@ from app.models.schemas import CostMetrics
 
 logger = logging.getLogger(__name__)
 
-# Tùy chỉnh hàm Retry: Thử lại tối đa 4 lần, thời gian đợi tăng dần (10s, 20s, 40s...)
+# Hàm kiểm tra xem lỗi có phải do hết Quota (429) không để kích hoạt Retry
 def is_rate_limit_error(exception):
-    """Hàm kiểm tra xem lỗi có phải do hết Quota (429) không để kích hoạt Retry."""
     error_msg = str(exception).lower()
     return "429" in error_msg or "quota" in error_msg or "exhausted" in error_msg
 
@@ -28,7 +27,7 @@ class LLMClient:
         else:
             raise ValueError("⚠️ Hệ thống thiếu API Key! Vui lòng kiểm tra lại file .env hoặc cấu hình Streamlit Secrets.")
 
-    # Gắn bùa "Hồi sinh" Tenacity: Tự động thử lại nếu gặp lỗi Rate Limit
+    # Gắn bùa "Hồi sinh" Tenacity cho văn bản thường
     @retry(
         retry=retry_if_exception_type(Exception),
         stop=stop_after_attempt(4), 
@@ -36,16 +35,13 @@ class LLMClient:
         reraise=True
     )
     def generate_content(self, prompt: str, system_instruction: str = None) -> str:
-        """Hàm lõi gọi LLM, đã được trang bị cơ chế tự động tránh lỗi Spam (429)."""
+        """Hàm lõi gọi LLM trả về văn bản thường, đã được trang bị cơ chế tự động tránh lỗi Spam."""
         
-        # 🛑 LỚP KHIÊN SỐ 1: Bắt hệ thống nghỉ ngơi 8 giây trước mỗi lần nhấc máy gọi AI
-        # Điều này đảm bảo tốc độ tối đa chỉ là ~7 requests/phút (An toàn cho gói Free của Google)
         logger.info(f"⏳ Đang hãm phanh 8 giây để tránh lỗi Quota... Chuẩn bị gọi {self.provider}")
         time.sleep(8)
 
         try:
             if self.provider == "gemini":
-                # Nếu có System Instruction (Ép AI đóng vai), khởi tạo model cấu hình mới
                 if system_instruction:
                     model = genai.GenerativeModel(
                         model_name='gemini-2.5-flash',
@@ -64,15 +60,69 @@ class LLMClient:
                 messages.append({"role": "user", "content": prompt})
                 
                 response = self.client.chat.completions.create(
-                    model="gpt-4o-mini", # Hoặc model mặc định bạn dùng
+                    model="gpt-4o-mini",
                     messages=messages,
                 )
                 return response.choices[0].message.content
                 
         except Exception as e:
-            # 🛡️ LỚP KHIÊN SỐ 2: Bắt lỗi. Nếu là lỗi 429, đá sang cho Tenacity xử lý đợi và thử lại.
             logger.error(f"❌ LLM gặp sự cố: {str(e)}")
             if is_rate_limit_error(e):
                 logger.warning("⚠️ Đụng trần API Free! Tenacity đang kích hoạt đếm lùi để thử lại...")
-                raise Exception(f"RateLimitError: {str(e)}") # Bắn lỗi ra để Tenacity bắt được
-            raise e # Nếu là lỗi khác (ví dụ sai API key), thì báo lỗi luôn
+                raise Exception(f"RateLimitError: {str(e)}") 
+            raise e 
+
+    # Gắn bùa "Hồi sinh" Tenacity cho JSON Mode
+    @retry(
+        retry=retry_if_exception_type(Exception),
+        stop=stop_after_attempt(4), 
+        wait=wait_exponential(multiplier=5, min=10, max=60),
+        reraise=True
+    )
+    def generate_json(self, prompt: str, system_instruction: str = None) -> dict:
+        """Hàm xuất dữ liệu dạng JSON cho các Agent, có gắn phanh 8 giây."""
+        
+        logger.info(f"⏳ Đang hãm phanh 8 giây (JSON Mode) để tránh lỗi Quota... Chuẩn bị gọi {self.provider}")
+        time.sleep(8)
+
+        try:
+            if self.provider == "gemini":
+                # Cấu hình ép Gemini trả về chuẩn JSON
+                generation_config = {"response_mime_type": "application/json"}
+                
+                if system_instruction:
+                    model = genai.GenerativeModel(
+                        model_name='gemini-2.5-flash',
+                        system_instruction=system_instruction,
+                        generation_config=generation_config
+                    )
+                else:
+                    model = genai.GenerativeModel(
+                        model_name='gemini-2.5-flash',
+                        generation_config=generation_config
+                    )
+                    
+                response = model.generate_content(prompt)
+                return json.loads(response.text)
+                
+            elif self.provider == "openai":
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": prompt})
+                
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    response_format={ "type": "json_object" } # Ép OpenAI trả JSON
+                )
+                return json.loads(response.choices[0].message.content)
+                
+        except Exception as e:
+            logger.error(f"❌ Lỗi khi generate JSON: {str(e)}")
+            if is_rate_limit_error(e):
+                logger.warning("⚠️ Đụng trần API! Tenacity đang kích hoạt đếm lùi...")
+                raise Exception(f"RateLimitError: {str(e)}")
+            
+            # Trả về dict lỗi thay vì sập hệ thống
+            return {"error": "Invalid JSON output from LLM", "details": str(e)}
