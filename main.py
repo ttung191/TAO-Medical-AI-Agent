@@ -88,7 +88,7 @@ if run_btn:
                         st.write(f"**Hướng xử trí:** {final_diag.treatment_plan}")
                 
                 with st.expander("📑 Xem chi tiết Lịch sử suy luận (Reasoning Logs)"):
-                    st.json(state.dict()) # Có thể format lại log đẹp hơn nếu muốn
+                    st.json(state.model_dump())
 
             except Exception as e:
                 st.error(f"Lỗi hệ thống: {str(e)}")
