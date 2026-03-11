@@ -1,51 +1,44 @@
 import json
+import logging
+from typing import Dict, List
 from app.core.llm_client import LLMClient
 from app.models.enums import Tier
 
+logger = logging.getLogger(__name__)
+
 class AgentRecruiter:
     def __init__(self):
-        self.llm = LLMClient()
+        self.llm_client = LLMClient()
 
-    def recruit_and_route(self, case_text: str) -> dict:
-        """
-        Phân tích ca bệnh và quyết định đội ngũ y tế cần thiết (Dynamic Recruitment)
-        """
+    def recruit_and_route(self, case_summary: str) -> Dict[Tier, List[str]]:
+        prompt = f"Based on this case: {case_summary}, recruit specialized medical agents for Tier 1, 2, and 3."
         system_prompt = """
-        You are a Medical Chief of Staff. Analyze the patient case and recruit a team of AI medical agents.
-        
-        RULES:
-        1. Identify 2-3 specific roles needed (e.g., Cardiologist, Toxicologist, Nurse).
-        2. Assign them to Tiers based on complexity:
-           - TIER_1: Initial Assessment (Generalists, Nurses).
-           - TIER_2: Specialists (Cardiologists, Neurologists).
-           - TIER_3: Super-Specialists/Consultants (Ethics Board, Rare Disease Expert).
-        3. Ensure at least one agent in Tier 1.
-        4. ALWAYS assign a "Clinical_Supervisor" or "Chief_Medical_Officer" to TIER_3_CONSULTANT if no specific super-specialist is obvious. TIER 3 MUST NOT BE EMPTY.
-        
-        OUTPUT JSON FORMAT:
-        {
-            "TIER_1_INITIAL": ["Role Name 1"],
-            "TIER_2_SPECIALIST": ["Role Name 2"],
-            "TIER_3_CONSULTANT": ["Role Name 3"]
-        }
+        You are a Medical Director. Return a JSON object with keys: 'TIER_1', 'TIER_2', 'TIER_3'.
+        Value for each key must be a list of roles (strings).
+        Example: {"TIER_1": ["General_Nurse"], "TIER_2": ["Cardiologist"], "TIER_3": ["Senior_Consultant"]}
         """
         
-        # Dùng model mặc định (Flash) được cấu hình trong LLMClient
-        response, _ = self.llm.generate_json(
-            model="models/gemini-2.5-flash", 
-            system_prompt=system_prompt,
-            user_prompt=f"PATIENT CASE: {case_text}"
-        )
-        
-        # Validate và map về Enum
-        recruitment_plan = {
-            Tier.TIER_1: response.get("TIER_1_INITIAL", ["General_Nurse"]),
-            Tier.TIER_2: response.get("TIER_2_SPECIALIST", ["General_Practitioner"]),
-            Tier.TIER_3: response.get("TIER_3_CONSULTANT", ["Clinical_Supervisor"]) # Fallback an toàn
-        }
-        
-        # Double check: Nếu Tier 3 rỗng, tự thêm vào
-        if not recruitment_plan[Tier.TIER_3]:
-            recruitment_plan[Tier.TIER_3] = ["Clinical_Supervisor"]
+        try:
+            # Sửa lỗi Unpack bằng cách nhận 1 biến duy nhất
+            response = self.llm_client.generate_json(prompt=prompt, system_prompt=system_prompt)
             
-        return recruitment_plan
+            # Mapping an toàn từ chuỗi sang Enum Tier
+            recruitment = {}
+            for tier_str, roles in response.items():
+                try:
+                    tier_enum = Tier[tier_str.upper()]
+                    recruitment[tier_enum] = roles if isinstance(roles, list) else [str(roles)]
+                except:
+                    continue
+            
+            if not recruitment: raise ValueError("Empty recruitment plan")
+            return recruitment
+            
+        except Exception as e:
+            logger.error(f"Recruitment Error: {e}")
+            # Trả về team mặc định nếu lỗi
+            return {
+                Tier.TIER_1: ["General_Nurse"],
+                Tier.TIER_2: ["General_Practitioner"],
+                Tier.TIER_3: ["Senior_Consultant"]
+            }
