@@ -3,4 +3,5 @@ google-generativeai
 pandas
 pydantic
 openai
-dotenv
+python-dotenv
+tenacity
