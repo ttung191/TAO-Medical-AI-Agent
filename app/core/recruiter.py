@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Dict, List
 from app.core.llm_client import LLMClient
@@ -13,30 +12,30 @@ class AgentRecruiter:
     def recruit_and_route(self, case_summary: str) -> Dict[Tier, List[str]]:
         prompt = f"Based on this case: {case_summary}, recruit specialized medical agents for Tier 1, 2, and 3."
         system_prompt = """
-        You are a Medical Director. Return a JSON object with keys: 'TIER_1', 'TIER_2', 'TIER_3'.
-        Value for each key must be a list of roles (strings).
-        Example: {"TIER_1": ["General_Nurse"], "TIER_2": ["Cardiologist"], "TIER_3": ["Senior_Consultant"]}
+        Return a JSON object: {"TIER_1": ["Role1"], "TIER_2": ["Role2"], "TIER_3": ["Role3"]}
+        Use exact Tier names as keys.
         """
         
         try:
-            # Sửa lỗi Unpack bằng cách nhận 1 biến duy nhất
+            # Nhận kết quả dạng dict
             response = self.llm_client.generate_json(prompt=prompt, system_prompt=system_prompt)
             
-            # Mapping an toàn từ chuỗi sang Enum Tier
             recruitment = {}
-            for tier_str, roles in response.items():
-                try:
-                    tier_enum = Tier[tier_str.upper()]
-                    recruitment[tier_enum] = roles if isinstance(roles, list) else [str(roles)]
-                except:
-                    continue
+            if isinstance(response, dict):
+                for tier_str, roles in response.items():
+                    try:
+                        # Chuyển đổi string sang Enum Tier
+                        key = Tier[tier_str.upper()]
+                        recruitment[key] = roles if isinstance(roles, list) else [str(roles)]
+                    except:
+                        continue
             
-            if not recruitment: raise ValueError("Empty recruitment plan")
+            if not recruitment: raise ValueError("Invalid recruitment format")
             return recruitment
             
         except Exception as e:
-            logger.error(f"Recruitment Error: {e}")
-            # Trả về team mặc định nếu lỗi
+            logger.error(f"⚠️ Recruitment failed: {e}")
+            # Team mặc định an toàn
             return {
                 Tier.TIER_1: ["General_Nurse"],
                 Tier.TIER_2: ["General_Practitioner"],
