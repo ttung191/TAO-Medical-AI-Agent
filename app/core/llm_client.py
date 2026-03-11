@@ -25,15 +25,17 @@ class LLMClient:
     @retry(
         retry=retry_if_exception_type(Exception),
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=5, max=30), # Đợi ngắn nếu lỗi (5s, 10s...)
+        wait=wait_exponential(multiplier=2, min=5, max=30),
         reraise=True
     )
-    def _call_llm(self, prompt: str, system_instruction: str = None, is_json: bool = False, **kwargs):
-        """Hàm dùng chung để xử lý mọi loại tham số (model, temperature, etc.)"""
+    def _call_llm(self, is_json: bool = False, **kwargs):
+        """Hàm xử lý linh hoạt mọi tham số truyền vào."""
+        # Chỉ nghỉ tối thiểu 1.5s để giữ an toàn cho RPM (Requests Per Minute)
+        time.sleep(1.5) 
         
-        # Chỉ nghỉ 1 giây để đảm bảo không bắn liên thanh quá mức
-        time.sleep(1) 
-        
+        # Lấy prompt từ bất kỳ đâu (vị trí đầu tiên hoặc từ khóa 'prompt')
+        prompt = kwargs.get('prompt') or ""
+        system_instruction = kwargs.get('system_instruction')
         model_name = kwargs.get('model') or 'gemini-2.5-flash'
         
         if self.provider == "gemini":
@@ -59,18 +61,19 @@ class LLMClient:
             )
             return response.choices[0].message.content
 
-    def generate_content(self, prompt: str, system_instruction: str = None, **kwargs) -> str:
-        """Hàm trả về text, nhận mọi tham số dư thừa qua **kwargs"""
+    # Sử dụng *args và **kwargs để chấp nhận MỌI kiểu gọi từ Agent
+    def generate_content(self, *args, **kwargs) -> str:
+        if args: kwargs['prompt'] = args[0]
         try:
-            return self._call_llm(prompt, system_instruction, is_json=False, **kwargs)
+            return self._call_llm(is_json=False, **kwargs)
         except Exception as e:
             if is_rate_limit_error(e): raise e
             return f"Error: {str(e)}"
 
-    def generate_json(self, prompt: str, system_instruction: str = None, **kwargs) -> dict:
-        """Hàm trả về JSON, nhận mọi tham số dư thừa qua **kwargs"""
+    def generate_json(self, *args, **kwargs) -> dict:
+        if args: kwargs['prompt'] = args[0]
         try:
-            result = self._call_llm(prompt, system_instruction, is_json=True, **kwargs)
+            result = self._call_llm(is_json=True, **kwargs)
             return json.loads(result)
         except Exception as e:
             if is_rate_limit_error(e): raise e
