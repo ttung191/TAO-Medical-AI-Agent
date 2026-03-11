@@ -25,33 +25,24 @@ class LLMClient:
     @retry(
         retry=retry_if_exception_type(Exception),
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=4, max=10),
+        wait=wait_exponential(multiplier=2, min=5, max=15),
         reraise=True
     )
-    def _ask_ai(self, is_json=False, *args, **kwargs):
-        """Hàm xử lý vạn năng: Chấp nhận mọi kiểu tham số từ Agent."""
-        # Nghỉ 1.2s để vừa nhanh vừa không bị Google khóa (RPM limit)
-        time.sleep(1.2)
+    def _execute_ai(self, prompt, system_instruction=None, model=None, is_json=False, **kwargs):
+        """Hàm thực thi lõi, bảo đảm nhận đúng System Instruction."""
+        # Nghỉ 1.5s để đảm bảo tốc độ (RPM) an toàn cho gói Free
+        time.sleep(1.5)
 
-        # 1. Tìm Prompt: ưu tiên args[0], sau đó đến key 'prompt' hoặc 'content'
-        prompt = ""
-        if args:
-            prompt = args[0]
-        else:
-            prompt = kwargs.get('prompt') or kwargs.get('content') or ""
-
-        # 2. Tìm System Instruction: chấp nhận cả 2 tên gọi phổ biến
-        system_instr = kwargs.get('system_instruction') or kwargs.get('system_prompt')
-        
-        # 3. Chọn Model
-        model_name = kwargs.get('model') or "gemini-1.5-flash"
+        # Xử lý các bí danh: Nếu Agent truyền 'system_prompt' thay vì 'system_instruction'
+        sys_instr = system_instruction or kwargs.get('system_prompt')
+        model_name = model or kwargs.get('model') or "gemini-1.5-flash"
 
         try:
             if self.provider == "gemini":
                 config = {"response_mime_type": "application/json"} if is_json else {}
                 model_obj = genai.GenerativeModel(
                     model_name=model_name,
-                    system_instruction=system_instr,
+                    system_instruction=sys_instr,
                     generation_config=config
                 )
                 response = model_obj.generate_content(prompt)
@@ -59,12 +50,12 @@ class LLMClient:
                 
             elif self.provider == "openai":
                 messages = []
-                if system_instr:
-                    messages.append({"role": "system", "content": system_instr})
+                if sys_instr:
+                    messages.append({"role": "system", "content": sys_instr})
                 messages.append({"role": "user", "content": prompt})
                 
                 response = self.client.chat.completions.create(
-                    model=kwargs.get('model') or "gpt-4o-mini",
+                    model=model_name if "gpt" in model_name else "gpt-4o-mini",
                     messages=messages,
                     response_format={"type": "json_object"} if is_json else None
                 )
@@ -72,25 +63,21 @@ class LLMClient:
                 return res_text if not is_json else json.loads(res_text)
                 
         except Exception as e:
-            if is_rate_limit_error(e):
-                logger.warning("⚠️ Đang đợi vì hết hạn mức (429)...")
-                raise e # Để tenacity tự thử lại
+            if is_rate_limit_error(e): raise e
             raise e
 
-    def generate_content(self, *args, **kwargs):
-        """Hàm trả về text: Chấp nhận MỌI tham số đầu vào."""
+    def generate_content(self, prompt, system_instruction=None, model=None, **kwargs):
+        """Hàm text: Khớp hoàn toàn với mọi Agent."""
         try:
-            return self._ask_ai(False, *args, **kwargs)
+            return self._execute_ai(prompt, system_instruction, model, is_json=False, **kwargs)
         except Exception as e:
             return f"Error: {str(e)}"
 
-    def generate_json(self, *args, **kwargs):
-        """Hàm trả về JSON: Chấp nhận MỌI tham số đầu vào."""
+    def generate_json(self, prompt, system_instruction=None, model=None, **kwargs):
+        """Hàm JSON: Khớp hoàn toàn với mọi Agent."""
         try:
-            return self._ask_ai(True, *args, **kwargs)
+            return self._execute_ai(prompt, system_instruction, model, is_json=True, **kwargs)
         except Exception as e:
-            return {
-                "diagnosis": "Lỗi hệ thống",
-                "reasoning": str(e),
-                "escalation_decision": "REJECT"
-            }
+            logger.error(f"Lỗi JSON: {e}")
+            # Trả về cấu trúc 2 phần tử tối thiểu để không bị lỗi 'unpack'
+            return {"diagnosis": "Error", "reasoning": str(e)}
