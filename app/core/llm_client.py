@@ -21,7 +21,6 @@ class LLMClient:
     def _get_input(self, prompt, kwargs):
         p = prompt if prompt else (kwargs.get('prompt') or kwargs.get('content') or "Analyze")
         s = kwargs.get('system_instruction') or kwargs.get('system_prompt')
-        # Sử dụng đúng model Gemini 2.5 Flash như bạn yêu cầu
         m = kwargs.get('model') or "models/gemini-2.5-flash"
         return str(p), s, m
 
@@ -47,7 +46,11 @@ class LLMClient:
             if self.provider == "gemini":
                 model = genai.GenerativeModel(model_name=m, system_instruction=s,
                                             generation_config={"response_mime_type": "application/json"})
-                return json.loads(model.generate_content(p).text)
+                result_text = model.generate_content(p).text
+                
+                # ✅ DỌN DẸP DỮ LIỆU: Cắt bỏ các thẻ markdown nếu có
+                clean_text = result_text.replace("```json", "").replace("```", "").strip()
+                return json.loads(clean_text)
             else:
                 messages = [{"role": "system", "content": s}] if s else []
                 messages.append({"role": "user", "content": p})
@@ -55,4 +58,5 @@ class LLMClient:
                                                        response_format={"type": "json_object"})
                 return json.loads(res.choices[0].message.content)
         except Exception as e:
-            return {"status": "error", "message": str(e)}
+            logger.error(f"LLM JSON Parsing Error: {e}")
+            return {"diagnosis_summary": f"Parse Error: {e}"}
