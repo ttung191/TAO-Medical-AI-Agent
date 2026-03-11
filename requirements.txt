@@ -5,3 +5,4 @@ pydantic
 openai
 python-dotenv
 tenacity
+PyYAML
