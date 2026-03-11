@@ -16,16 +16,17 @@ class LLMClient:
             self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
             self.provider = "openai"
         else:
-            raise ValueError("⚠️ API Key missing!")
+            raise ValueError("⚠️ Missing API Key!")
 
     def _get_input(self, prompt, kwargs):
-        p = prompt if prompt else (kwargs.get('prompt') or kwargs.get('content') or "Process medical case")
+        p = prompt if prompt else (kwargs.get('prompt') or kwargs.get('content') or "Analyze")
         s = kwargs.get('system_instruction') or kwargs.get('system_prompt')
-        m = kwargs.get('model') or "gemini-1.5-flash"
+        # ✅ CẬP NHẬT: Gemini 3 Flash
+        m = kwargs.get('model') or "gemini-3-flash"
         return str(p), s, m
 
     def generate_content(self, prompt=None, **kwargs):
-        time.sleep(1.2)
+        time.sleep(1) 
         p, s, m = self._get_input(prompt, kwargs)
         try:
             if self.provider == "gemini":
@@ -40,7 +41,7 @@ class LLMClient:
             return f"Error: {e}"
 
     def generate_json(self, prompt=None, **kwargs):
-        time.sleep(1.2)
+        time.sleep(1)
         p, s, m = self._get_input(prompt, kwargs)
         try:
             if self.provider == "gemini":
@@ -54,5 +55,4 @@ class LLMClient:
                                                        response_format={"type": "json_object"})
                 return json.loads(res.choices[0].message.content)
         except Exception as e:
-            logger.error(f"JSON Error: {e}")
-            return {"error": str(e), "status": "failed"}
+            return {"status": "error", "message": str(e)}
