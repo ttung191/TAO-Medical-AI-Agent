@@ -1,85 +1,92 @@
 import json
 import logging
-import time
 import google.generativeai as genai
 from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential
 from config.settings import settings
+from app.models.schemas import CostMetrics
 
-logger = logging.getLogger(__name__)
-
-def is_rate_limit_error(exception):
-    return "429" in str(exception) or "quota" in str(exception).lower()
+if settings.GOOGLE_API_KEY:
+    genai.configure(api_key=settings.GOOGLE_API_KEY)
 
 class LLMClient:
     def __init__(self):
-        if settings.GOOGLE_API_KEY:
-            genai.configure(api_key=settings.GOOGLE_API_KEY)
-            self.provider = "gemini"
-        elif settings.OPENAI_API_KEY:
-            self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
-            self.provider = "openai"
-        else:
-            raise ValueError("⚠️ Missing API Key!")
+        self.logger = logging.getLogger("LLMClient")
+        self.openai_client = None
+        
+        # Cấu hình cứng model Gemini 2.5 Flash
+        self.default_google_model = "models/gemini-2.5-flash"
 
-    @retry(
-        retry=retry_if_exception_type(Exception),
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=3, max=15),
-        reraise=True
-    )
-    def _execute_call(self, prompt: str, system_instruction: str = None, is_json: bool = False, model: str = None):
-        """Hàm thực thi gọi LLM thực tế."""
-        # Nghỉ 1.2s để tránh spam RPM, vừa đủ nhanh vừa an toàn
-        time.sleep(1.2)
-        
-        model_name = model if model else 'gemini-2.5-flash'
-        
-        if self.provider == "gemini":
-            config = {"response_mime_type": "application/json"} if is_json else {}
-            model_obj = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=system_instruction,
-                generation_config=config
-            )
-            response = model_obj.generate_content(prompt)
-            return response.text
-            
-        elif self.provider == "openai":
-            messages = []
-            if system_instruction:
-                messages.append({"role": "system", "content": system_instruction})
-            messages.append({"role": "user", "content": prompt})
-            
-            response = self.client.chat.completions.create(
-                model=model if model else "gpt-4o-mini",
-                messages=messages,
-                response_format={ "type": "json_object" } if is_json else None
-            )
-            return response.choices[0].message.content
+        if settings.OPENAI_API_KEY:
+            self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
-    def generate_content(self, *args, **kwargs) -> str:
-        """Xử lý linh hoạt mọi kiểu gọi hàm để lấy nội dung text."""
-        prompt = args[0] if args else kwargs.get('prompt', '')
-        system_instruction = kwargs.get('system_instruction')
-        model = kwargs.get('model')
-        
+    def _calculate_cost(self, model: str, input_tok: int, output_tok: int) -> float:
+        # Giá Flash (ước tính)
+        price = {"input": 0.075, "output": 0.30}
+        cost = (input_tok * price["input"] / 1_000_000) + (output_tok * price["output"] / 1_000_000)
+        return round(cost, 8)
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    def generate_json(self, model: str, system_prompt: str, user_prompt: str):
         try:
-            return self._execute_call(prompt, system_instruction, is_json=False, model=model)
-        except Exception as e:
-            if is_rate_limit_error(e): raise e
-            return f"Error: {str(e)}"
+            # === GOOGLE GEMINI ===
+            if "gemini" in model.lower() or "flash" in model.lower():
+                target_model = self.default_google_model
+                
+                model_instance = genai.GenerativeModel(
+                    model_name=target_model,
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                
+                combined_prompt = f"System Instruction: {system_prompt}\n\nUser Input: {user_prompt}"
+                response = model_instance.generate_content(combined_prompt)
+                
+                content_text = response.text
+                usage = response.usage_metadata
+                
+                in_tok = usage.prompt_token_count
+                out_tok = usage.candidates_token_count
+                cost = self._calculate_cost(target_model, in_tok, out_tok)
+                
+                return json.loads(content_text), CostMetrics(
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
+                    total_cost_usd=cost,
+                    model_name=target_model
+                )
 
-    def generate_json(self, *args, **kwargs) -> dict:
-        """Xử lý linh hoạt mọi kiểu gọi hàm để lấy nội dung JSON."""
-        prompt = args[0] if args else kwargs.get('prompt', '')
-        system_instruction = kwargs.get('system_instruction')
-        model = kwargs.get('model')
-        
-        try:
-            result = self._execute_call(prompt, system_instruction, is_json=True, model=model)
-            return json.loads(result)
+            # === OPENAI ===
+            elif self.openai_client:
+                response = self.openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.0
+                )
+                content = response.choices[0].message.content
+                usage = response.usage
+                
+                cost = self._calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
+                
+                return json.loads(content), CostMetrics(
+                    input_tokens=usage.prompt_tokens,
+                    output_tokens=usage.completion_tokens,
+                    total_cost_usd=cost,
+                    model_name=model
+                )
+            
+            else:
+                raise Exception("Chưa cấu hình API Key!")
+
         except Exception as e:
-            if is_rate_limit_error(e): raise e
-            # Nếu lỗi JSON, trả về cấu trúc để Agent không sập
-            return {"diagnosis": "Error", "reasoning": str(e), "escalation_decision": "REJECT"}
+            self.logger.error(f"Lỗi LLM: {str(e)}")
+            return {
+                "diagnosis": "Error in processing",
+                "treatment": "System Error",
+                "risk_level": "MODERATE",
+                "confidence": 0.0,
+                "reasoning": f"LLM Error: {str(e)}"
+            }, CostMetrics(model_name="error")
