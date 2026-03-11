@@ -1,92 +1,78 @@
 import json
 import logging
+import time
 import google.generativeai as genai
 from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config.settings import settings
 from app.models.schemas import CostMetrics
 
-if settings.GOOGLE_API_KEY:
-    genai.configure(api_key=settings.GOOGLE_API_KEY)
+logger = logging.getLogger(__name__)
+
+# Tùy chỉnh hàm Retry: Thử lại tối đa 4 lần, thời gian đợi tăng dần (10s, 20s, 40s...)
+def is_rate_limit_error(exception):
+    """Hàm kiểm tra xem lỗi có phải do hết Quota (429) không để kích hoạt Retry."""
+    error_msg = str(exception).lower()
+    return "429" in error_msg or "quota" in error_msg or "exhausted" in error_msg
 
 class LLMClient:
     def __init__(self):
-        self.logger = logging.getLogger("LLMClient")
-        self.openai_client = None
+        # Khởi tạo các API Keys dựa trên file settings
+        if settings.GOOGLE_API_KEY:
+            genai.configure(api_key=settings.GOOGLE_API_KEY)
+            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            self.provider = "gemini"
+        elif settings.OPENAI_API_KEY:
+            self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            self.provider = "openai"
+        else:
+            raise ValueError("⚠️ Hệ thống thiếu API Key! Vui lòng kiểm tra lại file .env hoặc cấu hình Streamlit Secrets.")
+
+    # Gắn bùa "Hồi sinh" Tenacity: Tự động thử lại nếu gặp lỗi Rate Limit
+    @retry(
+        retry=retry_if_exception_type(Exception),
+        stop=stop_after_attempt(4), 
+        wait=wait_exponential(multiplier=5, min=10, max=60), # Đợi từ 10s đến 60s
+        reraise=True
+    )
+    def generate_content(self, prompt: str, system_instruction: str = None) -> str:
+        """Hàm lõi gọi LLM, đã được trang bị cơ chế tự động tránh lỗi Spam (429)."""
         
-        # Cấu hình cứng model Gemini 2.5 Flash
-        self.default_google_model = "models/gemini-2.5-flash"
+        # 🛑 LỚP KHIÊN SỐ 1: Bắt hệ thống nghỉ ngơi 8 giây trước mỗi lần nhấc máy gọi AI
+        # Điều này đảm bảo tốc độ tối đa chỉ là ~7 requests/phút (An toàn cho gói Free của Google)
+        logger.info(f"⏳ Đang hãm phanh 8 giây để tránh lỗi Quota... Chuẩn bị gọi {self.provider}")
+        time.sleep(8)
 
-        if settings.OPENAI_API_KEY:
-            self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
-
-    def _calculate_cost(self, model: str, input_tok: int, output_tok: int) -> float:
-        # Giá Flash (ước tính)
-        price = {"input": 0.075, "output": 0.30}
-        cost = (input_tok * price["input"] / 1_000_000) + (output_tok * price["output"] / 1_000_000)
-        return round(cost, 8)
-
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def generate_json(self, model: str, system_prompt: str, user_prompt: str):
         try:
-            # === GOOGLE GEMINI ===
-            if "gemini" in model.lower() or "flash" in model.lower():
-                target_model = self.default_google_model
+            if self.provider == "gemini":
+                # Nếu có System Instruction (Ép AI đóng vai), khởi tạo model cấu hình mới
+                if system_instruction:
+                    model = genai.GenerativeModel(
+                        model_name='gemini-2.5-flash',
+                        system_instruction=system_instruction
+                    )
+                else:
+                    model = self.model
+                    
+                response = model.generate_content(prompt)
+                return response.text
                 
-                model_instance = genai.GenerativeModel(
-                    model_name=target_model,
-                    generation_config={"response_mime_type": "application/json"}
+            elif self.provider == "openai":
+                messages = []
+                if system_instruction:
+                    messages.append({"role": "system", "content": system_instruction})
+                messages.append({"role": "user", "content": prompt})
+                
+                response = self.client.chat.completions.create(
+                    model="gpt-4o-mini", # Hoặc model mặc định bạn dùng
+                    messages=messages,
                 )
+                return response.choices[0].message.content
                 
-                combined_prompt = f"System Instruction: {system_prompt}\n\nUser Input: {user_prompt}"
-                response = model_instance.generate_content(combined_prompt)
-                
-                content_text = response.text
-                usage = response.usage_metadata
-                
-                in_tok = usage.prompt_token_count
-                out_tok = usage.candidates_token_count
-                cost = self._calculate_cost(target_model, in_tok, out_tok)
-                
-                return json.loads(content_text), CostMetrics(
-                    input_tokens=in_tok,
-                    output_tokens=out_tok,
-                    total_cost_usd=cost,
-                    model_name=target_model
-                )
-
-            # === OPENAI ===
-            elif self.openai_client:
-                response = self.openai_client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    response_format={"type": "json_object"},
-                    temperature=0.0
-                )
-                content = response.choices[0].message.content
-                usage = response.usage
-                
-                cost = self._calculate_cost(model, usage.prompt_tokens, usage.completion_tokens)
-                
-                return json.loads(content), CostMetrics(
-                    input_tokens=usage.prompt_tokens,
-                    output_tokens=usage.completion_tokens,
-                    total_cost_usd=cost,
-                    model_name=model
-                )
-            
-            else:
-                raise Exception("Chưa cấu hình API Key!")
-
         except Exception as e:
-            self.logger.error(f"Lỗi LLM: {str(e)}")
-            return {
-                "diagnosis": "Error in processing",
-                "treatment": "System Error",
-                "risk_level": "MODERATE",
-                "confidence": 0.0,
-                "reasoning": f"LLM Error: {str(e)}"
-            }, CostMetrics(model_name="error")
+            # 🛡️ LỚP KHIÊN SỐ 2: Bắt lỗi. Nếu là lỗi 429, đá sang cho Tenacity xử lý đợi và thử lại.
+            logger.error(f"❌ LLM gặp sự cố: {str(e)}")
+            if is_rate_limit_error(e):
+                logger.warning("⚠️ Đụng trần API Free! Tenacity đang kích hoạt đếm lùi để thử lại...")
+                raise Exception(f"RateLimitError: {str(e)}") # Bắn lỗi ra để Tenacity bắt được
+            raise e # Nếu là lỗi khác (ví dụ sai API key), thì báo lỗi luôn
