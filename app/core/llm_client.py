@@ -5,116 +5,73 @@ import google.generativeai as genai
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config.settings import settings
-from app.models.schemas import CostMetrics
 
 logger = logging.getLogger(__name__)
 
 def is_rate_limit_error(exception):
-    error_msg = str(exception).lower()
-    return "429" in error_msg or "quota" in error_msg or "exhausted" in error_msg
+    return "429" in str(exception) or "quota" in str(exception).lower()
 
 class LLMClient:
     def __init__(self):
         if settings.GOOGLE_API_KEY:
             genai.configure(api_key=settings.GOOGLE_API_KEY)
-            self.model_default = genai.GenerativeModel('gemini-2.5-flash')
             self.provider = "gemini"
         elif settings.OPENAI_API_KEY:
             self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
             self.provider = "openai"
         else:
-            raise ValueError("⚠️ Hệ thống thiếu API Key! Vui lòng kiểm tra lại file .env hoặc cấu hình Streamlit Secrets.")
+            raise ValueError("⚠️ Missing API Key!")
 
     @retry(
         retry=retry_if_exception_type(Exception),
-        stop=stop_after_attempt(4), 
-        wait=wait_exponential(multiplier=5, min=10, max=60),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=5, max=30), # Đợi ngắn nếu lỗi (5s, 10s...)
         reraise=True
     )
-    def generate_content(self, prompt: str, system_instruction: str = None, model: str = None) -> str:
-        """Hàm trả về văn bản thường, chấp nhận tham số 'model' để tương thích với Agent."""
-        logger.info(f"⏳ Đang hãm phanh 8 giây... Chuẩn bị gọi {self.provider}")
-        time.sleep(8)
+    def _call_llm(self, prompt: str, system_instruction: str = None, is_json: bool = False, **kwargs):
+        """Hàm dùng chung để xử lý mọi loại tham số (model, temperature, etc.)"""
+        
+        # Chỉ nghỉ 1 giây để đảm bảo không bắn liên thanh quá mức
+        time.sleep(1) 
+        
+        model_name = kwargs.get('model') or 'gemini-2.5-flash'
+        
+        if self.provider == "gemini":
+            config = {"response_mime_type": "application/json"} if is_json else {}
+            model_obj = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_instruction,
+                generation_config=config
+            )
+            response = model_obj.generate_content(prompt)
+            return response.text
+            
+        elif self.provider == "openai":
+            messages = []
+            if system_instruction:
+                messages.append({"role": "system", "content": system_instruction})
+            messages.append({"role": "user", "content": prompt})
+            
+            response = self.client.chat.completions.create(
+                model=kwargs.get('model') or "gpt-4o-mini",
+                messages=messages,
+                response_format={ "type": "json_object" } if is_json else None
+            )
+            return response.choices[0].message.content
 
-        # Sử dụng model được truyền vào hoặc mặc định
-        model_name = model if model else 'gemini-2.5-flash'
-
+    def generate_content(self, prompt: str, system_instruction: str = None, **kwargs) -> str:
+        """Hàm trả về text, nhận mọi tham số dư thừa qua **kwargs"""
         try:
-            if self.provider == "gemini":
-                if system_instruction:
-                    model_obj = genai.GenerativeModel(
-                        model_name=model_name,
-                        system_instruction=system_instruction
-                    )
-                else:
-                    model_obj = genai.GenerativeModel(model_name=model_name)
-                    
-                response = model_obj.generate_content(prompt)
-                return response.text
-                
-            elif self.provider == "openai":
-                messages = []
-                if system_instruction:
-                    messages.append({"role": "system", "content": system_instruction})
-                messages.append({"role": "user", "content": prompt})
-                
-                response = self.client.chat.completions.create(
-                    model=model if model else "gpt-4o-mini",
-                    messages=messages,
-                )
-                return response.choices[0].message.content
-                
+            return self._call_llm(prompt, system_instruction, is_json=False, **kwargs)
         except Exception as e:
-            if is_rate_limit_error(e):
-                raise Exception(f"RateLimitError: {str(e)}") 
-            raise e 
+            if is_rate_limit_error(e): raise e
+            return f"Error: {str(e)}"
 
-    @retry(
-        retry=retry_if_exception_type(Exception),
-        stop=stop_after_attempt(4), 
-        wait=wait_exponential(multiplier=5, min=10, max=60),
-        reraise=True
-    )
-    def generate_json(self, prompt: str, system_instruction: str = None, model: str = None) -> dict:
-        """Hàm trả về JSON, chấp nhận tham số 'model' để tương thích với Agent."""
-        logger.info(f"⏳ Đang hãm phanh 8 giây (JSON)... Chuẩn bị gọi {self.provider}")
-        time.sleep(8)
-
-        model_name = model if model else 'gemini-2.5-flash'
-
+    def generate_json(self, prompt: str, system_instruction: str = None, **kwargs) -> dict:
+        """Hàm trả về JSON, nhận mọi tham số dư thừa qua **kwargs"""
         try:
-            if self.provider == "gemini":
-                generation_config = {"response_mime_type": "application/json"}
-                
-                if system_instruction:
-                    model_obj = genai.GenerativeModel(
-                        model_name=model_name,
-                        system_instruction=system_instruction,
-                        generation_config=generation_config
-                    )
-                else:
-                    model_obj = genai.GenerativeModel(
-                        model_name=model_name,
-                        generation_config=generation_config
-                    )
-                    
-                response = model_obj.generate_content(prompt)
-                return json.loads(response.text)
-                
-            elif self.provider == "openai":
-                messages = []
-                if system_instruction:
-                    messages.append({"role": "system", "content": system_instruction})
-                messages.append({"role": "user", "content": prompt})
-                
-                response = self.client.chat.completions.create(
-                    model=model if model else "gpt-4o-mini",
-                    messages=messages,
-                    response_format={ "type": "json_object" }
-                )
-                return json.loads(response.choices[0].message.content)
-                
+            result = self._call_llm(prompt, system_instruction, is_json=True, **kwargs)
+            return json.loads(result)
         except Exception as e:
-            if is_rate_limit_error(e):
-                raise Exception(f"RateLimitError: {str(e)}")
-            return {"error": "Invalid JSON output", "details": str(e)}
+            if is_rate_limit_error(e): raise e
+            return {"error": "Invalid JSON", "details": str(e)}
