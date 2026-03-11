@@ -25,18 +25,15 @@ class LLMClient:
     @retry(
         retry=retry_if_exception_type(Exception),
         stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=2, min=5, max=30),
+        wait=wait_exponential(multiplier=2, min=3, max=15),
         reraise=True
     )
-    def _call_llm(self, is_json: bool = False, **kwargs):
-        """Hàm xử lý linh hoạt mọi tham số truyền vào."""
-        # Chỉ nghỉ tối thiểu 1.5s để giữ an toàn cho RPM (Requests Per Minute)
-        time.sleep(1.5) 
+    def _execute_call(self, prompt: str, system_instruction: str = None, is_json: bool = False, model: str = None):
+        """Hàm thực thi gọi LLM thực tế."""
+        # Nghỉ 1.2s để tránh spam RPM, vừa đủ nhanh vừa an toàn
+        time.sleep(1.2)
         
-        # Lấy prompt từ bất kỳ đâu (vị trí đầu tiên hoặc từ khóa 'prompt')
-        prompt = kwargs.get('prompt') or ""
-        system_instruction = kwargs.get('system_instruction')
-        model_name = kwargs.get('model') or 'gemini-2.5-flash'
+        model_name = model if model else 'gemini-2.5-flash'
         
         if self.provider == "gemini":
             config = {"response_mime_type": "application/json"} if is_json else {}
@@ -55,26 +52,34 @@ class LLMClient:
             messages.append({"role": "user", "content": prompt})
             
             response = self.client.chat.completions.create(
-                model=kwargs.get('model') or "gpt-4o-mini",
+                model=model if model else "gpt-4o-mini",
                 messages=messages,
                 response_format={ "type": "json_object" } if is_json else None
             )
             return response.choices[0].message.content
 
-    # Sử dụng *args và **kwargs để chấp nhận MỌI kiểu gọi từ Agent
     def generate_content(self, *args, **kwargs) -> str:
-        if args: kwargs['prompt'] = args[0]
+        """Xử lý linh hoạt mọi kiểu gọi hàm để lấy nội dung text."""
+        prompt = args[0] if args else kwargs.get('prompt', '')
+        system_instruction = kwargs.get('system_instruction')
+        model = kwargs.get('model')
+        
         try:
-            return self._call_llm(is_json=False, **kwargs)
+            return self._execute_call(prompt, system_instruction, is_json=False, model=model)
         except Exception as e:
             if is_rate_limit_error(e): raise e
             return f"Error: {str(e)}"
 
     def generate_json(self, *args, **kwargs) -> dict:
-        if args: kwargs['prompt'] = args[0]
+        """Xử lý linh hoạt mọi kiểu gọi hàm để lấy nội dung JSON."""
+        prompt = args[0] if args else kwargs.get('prompt', '')
+        system_instruction = kwargs.get('system_instruction')
+        model = kwargs.get('model')
+        
         try:
-            result = self._call_llm(is_json=True, **kwargs)
+            result = self._execute_call(prompt, system_instruction, is_json=True, model=model)
             return json.loads(result)
         except Exception as e:
             if is_rate_limit_error(e): raise e
-            return {"error": "Invalid JSON", "details": str(e)}
+            # Nếu lỗi JSON, trả về cấu trúc để Agent không sập
+            return {"diagnosis": "Error", "reasoning": str(e), "escalation_decision": "REJECT"}
