@@ -7,7 +7,6 @@ from app.models.enums import AgentStatus, EscalationDecision
 logger = logging.getLogger(__name__)
 
 class BaseAgent(ABC):
-    """Lớp cơ sở bắt buộc cho tất cả các Agent trong hệ thống TAO."""
     def __init__(self, model_name, tier, role_name):
         self.model_name = model_name
         self.tier = tier
@@ -19,8 +18,6 @@ class BaseAgent(ABC):
         pass
 
 class DynamicMedicalAgent(BaseAgent):
-    """Agent y tế động: Thực hiện phân tích chuyên sâu theo vai trò."""
-    
     def process_case(self, case, history=None, feedback_received=None) -> AgentDiagnosis:
         prompt = (
             f"Patient Symptoms: {case.symptoms}\n"
@@ -33,15 +30,12 @@ class DynamicMedicalAgent(BaseAgent):
             f"You are a {self.role_name} at {self.tier.value}. "
             "Analyze the case and provide a diagnosis in JSON format. "
             "Fields: diagnosis_summary, treatment_plan, confidence_score, "
-            "risk_assessment, reasoning, escalation_decision (CONTINUE/ESCALATE/REJECT), "
-            "feedback_to_lower_tier."
+            "risk_assessment, reasoning, escalation_decision, feedback_to_lower_tier."
         )
 
         try:
-            # Gọi API và nhận kết quả dạng Dictionary
             res = self.llm_client.generate_json(prompt=prompt, system_prompt=system_prompt, model=self.model_name)
             
-            # Kiểm tra dữ liệu an toàn
             if not isinstance(res, dict):
                 res = {}
 
@@ -54,7 +48,13 @@ class DynamicMedicalAgent(BaseAgent):
                 reasoning=res.get("reasoning") or "No reasoning provided",
                 escalation_decision=EscalationDecision(res.get("escalation_decision", "CONTINUE")),
                 feedback_to_lower_tier=res.get("feedback_to_lower_tier"),
-                metrics=CostMetrics(input_tokens=0, output_tokens=0, total_cost_usd=0.0)
+                # ✅ ĐÃ FIX: Thêm model_name vào đây
+                metrics=CostMetrics(
+                    model_name=self.model_name, 
+                    input_tokens=0, 
+                    output_tokens=0, 
+                    total_cost_usd=0.0
+                )
             )
         except Exception as e:
             logger.error(f"❌ Agent {self.role_name} Error: {e}")
@@ -66,5 +66,10 @@ class DynamicMedicalAgent(BaseAgent):
                 confidence_score=0.0,
                 reasoning=str(e),
                 escalation_decision=EscalationDecision.REJECT,
-                metrics=CostMetrics(input_tokens=0, output_tokens=0, total_cost_usd=0.0)
+                metrics=CostMetrics(
+                    model_name=self.model_name, 
+                    input_tokens=0, 
+                    output_tokens=0, 
+                    total_cost_usd=0.0
+                )
             )
