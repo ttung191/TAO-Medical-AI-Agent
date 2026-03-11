@@ -29,35 +29,35 @@ class DynamicMedicalAgent(BaseAgent):
         system_prompt = (
             f"You are a {self.role_name} at {self.tier.value}. "
             "Analyze and provide diagnosis in JSON format. "
-            "IMPORTANT: escalation_decision must be either 'ESCALATE', 'REJECT', or 'COMPLETED'. "
-            "Risk assessment must be 'LOW', 'MEDIUM', 'HIGH', or 'CRITICAL'."
+            "Fields: diagnosis_summary, treatment_plan, confidence_score, reasoning, "
+            "risk_assessment (LOW/MEDIUM/HIGH/CRITICAL), "
+            "escalation_decision (ESCALATE/REJECT/COMPLETED)."
         )
 
         try:
             res = self.llm_client.generate_json(prompt=prompt, system_prompt=system_prompt, model=self.model_name)
             if not isinstance(res, dict): res = {}
 
-            # ✅ Fix lỗi 'CONTINUE' không hợp lệ
+            # Xử lý lỗi Enum 'CONTINUE' -> Chuyển về 'ESCALATE'
             raw_decision = str(res.get("escalation_decision", "ESCALATE")).upper()
             if raw_decision not in ["ESCALATE", "REJECT", "COMPLETED"]:
-                # Nếu AI trả về CONTINUE hoặc bất kỳ thứ gì khác, mặc định là ESCALATE để hội chẩn tiếp
-                final_decision = EscalationDecision.ESCALATE 
+                final_decision = EscalationDecision.ESCALATE
             else:
                 final_decision = EscalationDecision(raw_decision)
 
             return AgentDiagnosis(
                 agent_name=self.role_name,
-                role=self.role_name, # ✅ ĐÃ THÊM: Fix lỗi thiếu trường role
+                role=self.role_name, # Đã thêm: Fix lỗi Pydantic
                 tier=self.tier,
                 diagnosis_summary=res.get("diagnosis_summary") or res.get("diagnosis") or "No summary",
                 treatment_plan=res.get("treatment_plan") or "No plan",
                 confidence_score=float(res.get("confidence_score", 0.8)),
-                risk_assessment=RiskLevel(res.get("risk_assessment", "MEDIUM")), # ✅ ĐÃ THÊM: Fix lỗi thiếu risk_assessment
+                risk_assessment=RiskLevel(res.get("risk_assessment", "MEDIUM")), # Đã thêm: Fix lỗi Pydantic
                 reasoning=res.get("reasoning") or "No reasoning provided",
                 escalation_decision=final_decision,
                 feedback_to_lower_tier=res.get("feedback_to_lower_tier"),
                 metrics=CostMetrics(
-                    model_name=self.model_name,
+                    model_name=self.model_name, # Đã thêm: Fix lỗi Pydantic
                     input_tokens=0,
                     output_tokens=0,
                     total_cost_usd=0.0
@@ -69,8 +69,8 @@ class DynamicMedicalAgent(BaseAgent):
                 agent_name=self.role_name,
                 role=self.role_name,
                 tier=self.tier,
-                diagnosis_summary="Lỗi xử lý hệ thống",
-                treatment_plan="Cần khởi động lại luồng",
+                diagnosis_summary="Lỗi xử lý",
+                treatment_plan="Cần khởi động lại",
                 confidence_score=0.0,
                 risk_assessment=RiskLevel.HIGH,
                 reasoning=str(e),
