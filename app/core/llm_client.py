@@ -4,8 +4,12 @@ import time
 import google.generativeai as genai
 from openai import OpenAI
 from config.settings import settings
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
+
+def is_rate_limit_error(e):
+    return "429" in str(e) or "quota" in str(e).lower()
 
 class LLMClient:
     def __init__(self):
@@ -16,60 +20,77 @@ class LLMClient:
             self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
             self.provider = "openai"
         else:
-            raise ValueError("⚠️ Thiếu API Key!")
+            raise ValueError("⚠️ Cần API Key để hoạt động!")
 
-    def _call_ai(self, is_json=False, **kwargs):
-        """Hàm xử lý lõi, linh hoạt với mọi loại tham số truyền vào."""
-        # Nghỉ 1.5s để đảm bảo không bị Google chặn vì gọi quá nhanh
-        time.sleep(1.5)
+    @retry(
+        retry=retry_if_exception_type(Exception),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=4, max=10),
+        reraise=True
+    )
+    def _ask_ai(self, is_json=False, *args, **kwargs):
+        """Hàm xử lý vạn năng: Chấp nhận mọi kiểu tham số từ Agent."""
+        # Nghỉ 1.2s để vừa nhanh vừa không bị Google khóa (RPM limit)
+        time.sleep(1.2)
+
+        # 1. Tìm Prompt: ưu tiên args[0], sau đó đến key 'prompt' hoặc 'content'
+        prompt = ""
+        if args:
+            prompt = args[0]
+        else:
+            prompt = kwargs.get('prompt') or kwargs.get('content') or ""
+
+        # 2. Tìm System Instruction: chấp nhận cả 2 tên gọi phổ biến
+        system_instr = kwargs.get('system_instruction') or kwargs.get('system_prompt')
         
-        # Nhặt nhạnh tham số từ túi kwargs bất kể tên gọi là gì
-        prompt = kwargs.get('prompt') or kwargs.get('content') or ""
-        system_instruction = kwargs.get('system_instruction') or kwargs.get('system_prompt')
+        # 3. Chọn Model
         model_name = kwargs.get('model') or "gemini-1.5-flash"
-        
-        if self.provider == "gemini":
-            config = {"response_mime_type": "application/json"} if is_json else {}
-            model_obj = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=system_instruction,
-                generation_config=config
-            )
-            response = model_obj.generate_content(prompt)
-            return response.text
-            
-        elif self.provider == "openai":
-            messages = []
-            if system_instruction:
-                messages.append({"role": "system", "content": system_instruction})
-            messages.append({"role": "user", "content": prompt})
-            
-            response = self.client.chat.completions.create(
-                model=kwargs.get('model') or "gpt-4o-mini",
-                messages=messages,
-                response_format={"type": "json_object"} if is_json else None
-            )
-            return response.choices[0].message.content
 
-    def generate_content(self, prompt=None, **kwargs):
-        """Hàm text: prompt bây giờ là tùy chọn, không sợ bị thiếu tham số."""
-        if prompt: kwargs['prompt'] = prompt
         try:
-            return self._call_ai(is_json=False, **kwargs)
+            if self.provider == "gemini":
+                config = {"response_mime_type": "application/json"} if is_json else {}
+                model_obj = genai.GenerativeModel(
+                    model_name=model_name,
+                    system_instruction=system_instr,
+                    generation_config=config
+                )
+                response = model_obj.generate_content(prompt)
+                return response.text if not is_json else json.loads(response.text)
+                
+            elif self.provider == "openai":
+                messages = []
+                if system_instr:
+                    messages.append({"role": "system", "content": system_instr})
+                messages.append({"role": "user", "content": prompt})
+                
+                response = self.client.chat.completions.create(
+                    model=kwargs.get('model') or "gpt-4o-mini",
+                    messages=messages,
+                    response_format={"type": "json_object"} if is_json else None
+                )
+                res_text = response.choices[0].message.content
+                return res_text if not is_json else json.loads(res_text)
+                
         except Exception as e:
-            logger.error(f"Lỗi Content: {e}")
+            if is_rate_limit_error(e):
+                logger.warning("⚠️ Đang đợi vì hết hạn mức (429)...")
+                raise e # Để tenacity tự thử lại
+            raise e
+
+    def generate_content(self, *args, **kwargs):
+        """Hàm trả về text: Chấp nhận MỌI tham số đầu vào."""
+        try:
+            return self._ask_ai(False, *args, **kwargs)
+        except Exception as e:
             return f"Error: {str(e)}"
 
-    def generate_json(self, prompt=None, **kwargs):
-        """Hàm JSON: prompt bây giờ là tùy chọn, chấp nhận mọi kiểu gọi."""
-        if prompt: kwargs['prompt'] = prompt
+    def generate_json(self, *args, **kwargs):
+        """Hàm trả về JSON: Chấp nhận MỌI tham số đầu vào."""
         try:
-            res = self._call_ai(is_json=True, **kwargs)
-            return json.loads(res)
+            return self._ask_ai(True, *args, **kwargs)
         except Exception as e:
-            logger.error(f"Lỗi JSON: {e}")
             return {
-                "diagnosis": "Lỗi xử lý hệ thống",
-                "reasoning": f"Sự cố API hoặc JSON format: {str(e)}",
+                "diagnosis": "Lỗi hệ thống",
+                "reasoning": str(e),
                 "escalation_decision": "REJECT"
             }
