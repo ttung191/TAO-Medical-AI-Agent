@@ -26,7 +26,6 @@ class DynamicMedicalAgent(BaseAgent):
             f"Feedback: {feedback_received}"
         )
         
-        # ✅ ÉP KHUÔN JSON CHUẨN XÁC 100%
         system_prompt = (
             f"You are a {self.role_name} at {self.tier.value}. "
             "You MUST return ONLY a raw JSON object. Do NOT wrap it in ```json blocks. "
@@ -36,8 +35,8 @@ class DynamicMedicalAgent(BaseAgent):
             '  "treatment_plan": "treatment steps here",\n'
             '  "confidence_score": 0.95,\n'
             '  "reasoning": "your medical reasoning",\n'
-            '  "risk_assessment": "CRITICAL",\n'  # LOW, MODERATE, HIGH, CRITICAL
-            '  "escalation_decision": "ESCALATE",\n' # ESCALATE, REJECT, COMPLETED
+            '  "risk_assessment": "CRITICAL",\n' 
+            '  "escalation_decision": "ESCALATE",\n' 
             '  "feedback_to_lower_tier": "advice here"\n'
             "}"
         )
@@ -59,6 +58,13 @@ class DynamicMedicalAgent(BaseAgent):
             except ValueError:
                 final_risk = RiskLevel.HIGH
 
+            # ✅ ƯỚC LƯỢNG TOKENS & CHI PHÍ
+            # Tiếng Việt thường tốn nhiều token hơn tiếng Anh (ước lượng khoảng 3 ký tự/token)
+            in_tokens = len(prompt + system_prompt) // 3
+            out_tokens = len(str(res)) // 3
+            # Tham khảo giá Gemini: $0.075/1M input, $0.30/1M output
+            cost_usd = (in_tokens * 0.075 / 1000000) + (out_tokens * 0.3 / 1000000)
+
             return AgentDiagnosis(
                 agent_name=self.role_name,
                 role=self.role_name,
@@ -70,7 +76,12 @@ class DynamicMedicalAgent(BaseAgent):
                 reasoning=res.get("reasoning", "No reasoning provided"),
                 escalation_decision=final_decision,
                 feedback_to_lower_tier=res.get("feedback_to_lower_tier", ""),
-                metrics=CostMetrics(model_name=self.model_name, input_tokens=0, output_tokens=0, total_cost_usd=0.0)
+                metrics=CostMetrics(
+                    model_name=self.model_name, 
+                    input_tokens=in_tokens, 
+                    output_tokens=out_tokens, 
+                    total_cost_usd=round(cost_usd, 6) # Làm tròn 6 chữ số thập phân
+                )
             )
         except Exception as e:
             logger.error(f"❌ Agent {self.role_name} Error: {e}")
