@@ -1,7 +1,10 @@
 import asyncio
-from typing import List
+from typing import TYPE_CHECKING, List
 from tao_medical_ai.contracts.case import StructuredCase, AgentAssessment
 from tao_medical_ai.contracts.enums import EscalationDecision
+
+if TYPE_CHECKING:
+    from tao_medical_ai.agents.dynamic_agent import DynamicMedicalAgent
 
 class IntraTierCollaborator:
     async def run_tier_agents(self, case: StructuredCase, agents: List['DynamicMedicalAgent'], history: dict) -> AgentAssessment:
